@@ -15,20 +15,12 @@ fn strip_trailing_newline(input: &str) -> &str {
 pub struct Client {
     pub id: u8,
     pub stream: TcpStream,
+    pub killed: bool,
 }
 
 impl Client {
-    pub fn send(&mut self, msg: &[u8]) -> Result<usize> {
-        self.stream.write(msg)
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
-        self.stream.flush()
-    }
-
-    pub fn handle_client(&mut self) -> Result<()> {
-        let hi_data = b"Hi client x\n";
-        match self.send(hi_data) {
+    pub fn send(&mut self, msg: &[u8]) -> usize{
+        match self.stream.write(msg) {
             Ok(size) => {
                 // Message sent, flush
                 match self.flush() {
@@ -38,39 +30,50 @@ impl Client {
                     }
                 }
                 println!("Wrote {} bytes to client {}", size, self.id);
+                size
             }
             Err(error) => {
                 println!("Error: {error}");
+                let err_code = error.raw_os_error().unwrap();
+                if err_code == 32 {
+                    // Broken pipe, aka client disconnected
+                    self.killed = true;
+                }
+                0
             }
         }
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.stream.flush()
+    }
+
+    pub fn handle_client(&mut self) -> Result<()> {
+        let id = self.id;
+        let _ = self.send(format!("Hi client {id}\n").as_bytes());
 
         let mut data = [0_u8; MESSAGE_BUFFER_SIZE];
-        while match self.stream.read(&mut data) {
+        'thread_loop: while match self.stream.read(&mut data) {
             Ok(size) => {
-                // Send received, unnecessary but here for testing
-                match self.send(b"Received\n") {
-                    Ok(size) => {
-                        println!("Wrote {} bytes to client {}", size, self.id);
-                    }
-                    Err(error) => {
-                        println!("Error: {error}");
-                    }
-                }
+                let _ = self.send(b"Received\n");
 
                 let received_data = match from_utf8(&data) {
                     Ok(res) => res,
-                    Err(error) => {
-                        println!("Error: {error}");
+                    Err(err) => {
+                        println!("Error: {err}");
                         &""
                     }
                 };
 
-                let received_data = strip_trailing_newline(strip_trailing_newline(received_data));
+                let received_data = strip_trailing_newline(received_data);
                 match self.handle_message(received_data, size) {
                     Ok(_) => (),
                     Err(err) => {
-                        println!("Error: {err}")
+                        println!("Error: {err}");
                     }
+                }
+                if self.killed {
+                    break 'thread_loop;
                 }
                 true
             }
@@ -79,7 +82,8 @@ impl Client {
                     "An error occurred, terminating connection with {}",
                     self.stream.peer_addr().unwrap()
                 );
-                self.stream.shutdown(Shutdown::Both).unwrap();
+                // self.stream.shutdown(Shutdown::Both).unwrap();
+                self.shutdown();
                 false
             }
         } {}
@@ -89,6 +93,11 @@ impl Client {
     pub fn handle_message(&mut self, msg: &str, len: usize) -> Result<()> {
         print!("Received {len} bytes: {msg}");
         Ok(())
+    }
+
+    pub fn shutdown(&mut self) {
+        self.stream.shutdown(Shutdown::Both).unwrap();
+        self.killed = true;
     }
 
 }

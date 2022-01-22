@@ -23,6 +23,7 @@ fn main() {
                 let mut client = Client {
                     id: amount_of_clients,
                     stream,
+                    killed: false,
                 };
 
                 println!("New connection: {}", client.stream.peer_addr().unwrap());
