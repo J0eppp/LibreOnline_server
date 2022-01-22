@@ -1,21 +1,35 @@
 use std::net::TcpListener;
 use std::thread;
 
-mod handlers;
+mod types;
+mod constraints;
 
-use crate::handlers::clients::handle_client;
+use crate::types::client::Client;
+use crate::constraints::MAX_CLIENTS;
 
 fn main() {
+    let mut amount_of_clients: u8 = 0;
     let listener = TcpListener::bind("0.0.0.0:3333").unwrap();
     // Accept connections and process them, spawning a new thread for each one
     println!("Server listening on port 3333");
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                println!("New connection: {}", stream.peer_addr().unwrap());
+                if amount_of_clients >= MAX_CLIENTS {
+                    // Nope
+                    drop(stream);
+                    return;
+                }
+                let mut client = Client {
+                    id: amount_of_clients,
+                    stream,
+                };
+
+                println!("New connection: {}", client.stream.peer_addr().unwrap());
+                amount_of_clients += 1;
                 thread::spawn(move || {
                     // connection succeeded
-                    handle_client(stream)
+                    client.handle_client()
                 });
             }
             Err(e) => {
