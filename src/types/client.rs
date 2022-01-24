@@ -1,9 +1,11 @@
-use std::io::{Result, Write, Read};
-use std::net::TcpStream;
+use std::io::{Read, Result, Write};
 use std::net::Shutdown;
+use std::net::TcpStream;
 use std::str::from_utf8;
 
-use crate::constraints::MESSAGE_BUFFER_SIZE;
+use rand;
+
+use crate::constants::MESSAGE_BUFFER_SIZE;
 
 fn strip_trailing_newline(input: &str) -> &str {
     input
@@ -12,14 +14,24 @@ fn strip_trailing_newline(input: &str) -> &str {
         .unwrap_or(input)
 }
 
+pub fn new_client(id: u8, stream: TcpStream) -> Client {
+        Client {
+            id,
+            stream,
+            killed: false,
+            token: (0..64).map(|_| (0x20u8 + (rand::random::<f32>() * 96.0) as u8) as char).collect::<String>(),
+        }
+    }
+
 pub struct Client {
     pub id: u8,
     pub stream: TcpStream,
     pub killed: bool,
+    pub token: String,
 }
 
 impl Client {
-    pub fn send(&mut self, msg: &[u8]) -> usize{
+    pub fn send(&mut self, msg: &[u8]) -> usize {
         match self.stream.write(msg) {
             Ok(size) => {
                 // Message sent, flush
@@ -49,11 +61,18 @@ impl Client {
     }
 
     pub fn handle_client(&mut self) -> Result<()> {
-        let id = self.id;
-        let _ = self.send(format!("Hi client {id}\n").as_bytes());
+        // let id = self.id;
+        let mut message = String::new();
+        message.push_str("Hi client ");
+        message.push_str(self.token.as_str());
+        message.push_str("\n");
+        // let token = self.token;
+        // let _ = self.send("Hi client " + token + "\n");
+        // let _ = self.send(format!("Hi client {token}\n").as_bytes());
+        let _ = self.send(message.as_bytes());
 
         let mut data = [0_u8; MESSAGE_BUFFER_SIZE];
-        'thread_loop: while match self.stream.read(&mut data) {
+        'client_thread_loop: while match self.stream.read(&mut data) {
             Ok(size) => {
                 let _ = self.send(b"Received\n");
 
@@ -73,7 +92,7 @@ impl Client {
                     }
                 }
                 if self.killed {
-                    break 'thread_loop;
+                    break 'client_thread_loop;
                 }
                 true
             }
@@ -99,5 +118,4 @@ impl Client {
         self.stream.shutdown(Shutdown::Both).unwrap();
         self.killed = true;
     }
-
 }
